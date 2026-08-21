@@ -1,0 +1,122 @@
+name: release
+
+# Builds the ESP32-S3 firmware on every version tag and attaches a flashable
+# binary to the GitHub release. Same ESP-IDF as CI. A single merged image that
+# flashes at 0x0, plus the component images for anyone who prefers offsets.
+
+on:
+  push:
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach (e.g. v0.2.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build firmware
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: vars
+        run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.vars.outputs.tag }}
+
+      - name: Host unit tests (engines + UI) gate
+        run: make -C test/host
+
+      - name: Build for ESP32-S3
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5
+          target: esp32s3
+          path: '.'
+
+      - name: Assemble a flashable bundle
+        run: |
+          set -eo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+          # Pin esptool 4.x: the 5.x line changed merge_bin's CLI/defaults.
+          python -m pip install --quiet "esptool~=4.8"
+
+          # build/ is created by the ESP-IDF container as root, so write outputs
+          # into a runner-owned dist/ (absolute path).
+          DIST="$PWD/dist"; mkdir -p "$DIST"
+
+          # Merge bootloader + partition table + app into one 0x0 image using the
+          # exact offsets idf.py recorded in build/flash_args.
+          ( cd build && python -m esptool --chip esp32s3 merge_bin \
+              -o "$DIST/aegis-${TAG}-esp32s3.bin" @flash_args )
+
+          # Component images too.
+          cp build/bootloader/bootloader.bin        "$DIST/"
+          cp build/partition_table/partition-table.bin "$DIST/"
+          cp build/aegis.bin                        "$DIST/aegis-app.bin"
+
+          # Stable, version-less copy: the Pages flasher downloads this into a
+          # same-origin path (GitHub release assets carry no CORS header, so a
+          # browser cannot fetch them cross-origin — the flasher never links here
+          # directly; curl/esptool users can).
+          cp "$DIST/aegis-${TAG}-esp32s3.bin" "$DIST/aegis-esp32s3.bin"
+
+          cat > dist/FLASH.md <<EOF
+          # Flashing Aegis ${TAG} to a Waveshare ESP32-S3-GEEK
+
+          Easiest: the browser flasher — https://at0m-b0mb.github.io/Aegis-ESP32-S3-GEEK/
+
+          Single-file image with esptool:
+
+              esptool.py --chip esp32s3 write_flash 0x0 aegis-${TAG}-esp32s3.bin
+
+          Explicit offsets:
+
+              esptool.py --chip esp32s3 write_flash \\
+                0x0     bootloader.bin \\
+                0x8000  partition-table.bin \\
+                0x10000 aegis-app.bin
+
+          Aegis is blue-team, listen-only. The LCD orientation/colour is the one
+          thing still being validated on hardware; engines + serial + SD are live.
+          EOF
+
+          sha256sum dist/* > "dist/SHA256SUMS.txt"
+          ( cd dist && zip -q "aegis-${TAG}-esp32s3.zip" \
+              "aegis-${TAG}-esp32s3.bin" bootloader.bin partition-table.bin \
+              aegis-app.bin FLASH.md SHA256SUMS.txt )
+          ls -l dist
+
+      - name: Attach binaries to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+
+          # The release object is usually created by the maintainer. This job is
+          # triggered by the TAG PUSH, so wait for it, then create a placeholder
+          # only if none appears — keeps the maintainer's notes, stops a good
+          # build from being discarded.
+          deadline=$(( SECONDS + 600 ))
+          until gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::warning::no release for $TAG after 10 min; creating one"
+              gh release create "$TAG" --repo "${{ github.repository }}" \
+                --title "Aegis $TAG" --notes "Automated release. Firmware built in CI." || true
+              break
+            fi
+            echo "waiting for release $TAG ..."; sleep 20
+          done
+
+          gh release upload "$TAG" \
+            "dist/aegis-${TAG}-esp32s3.bin" \
+            "dist/aegis-esp32s3.bin" \
+            "dist/aegis-${TAG}-esp32s3.zip" \
+            "dist/SHA256SUMS.txt" \
+            --clobber --repo "${{ github.repository }}"

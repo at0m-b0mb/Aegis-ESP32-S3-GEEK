@@ -1,0 +1,97 @@
+name: pages
+
+# Publishes the browser flasher to GitHub Pages and puts the release firmware
+# next to it (same-origin, so the browser can fetch it — release assets carry no
+# CORS header). Nothing binary is committed to git; this pulls the .bin from the
+# release that release.yml built.
+
+on:
+  # NOT `release: published`: the github-pages environment allows only `main`,
+  # and a release-triggered run executes in the tag's context (refs/tags/vX.Y.Z),
+  # which the environment rejects before any step runs. `workflow_run` runs in
+  # the default-branch context (allowed) and only after the release build has
+  # finished, so the firmware asset already exists.
+  workflow_run:
+    workflows: [ "release" ]
+    types: [ completed ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v0.2.0). Blank = newest."
+        required: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: vars
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${{ github.event.workflow_run.head_branch }}"
+          case "$TAG" in
+            v*) ;;
+            *)  TAG=$(gh release view --repo "${{ github.repository }}" --json tagName --jq .tagName) ;;
+          esac
+          echo "resolved tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+          mkdir -p _site/firmware
+
+          cp docs/flasher/index.html    _site/index.html
+          cp docs/flasher/manifest.json _site/manifest.json
+
+          # Wait for the firmware asset (insurance for the manual-dispatch path).
+          deadline=$(( SECONDS + 900 ))
+          until gh release view "$TAG" --repo "${{ github.repository }}" \
+                  --json assets --jq '.assets[].name' 2>/dev/null \
+                | grep -qx -- "aegis-${TAG}-esp32s3.bin"; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::aegis-${TAG}-esp32s3.bin missing on release $TAG after 15 min"
+              exit 1
+            fi
+            echo "waiting for the firmware asset on $TAG ..."; sleep 20
+          done
+
+          gh release download "$TAG" --repo "${{ github.repository }}" \
+            --pattern "aegis-${TAG}-esp32s3.bin" \
+            --output _site/firmware/aegis-esp32s3.bin --clobber
+
+          size=$(stat -c%s _site/firmware/aegis-esp32s3.bin)
+          echo "firmware: ${size} bytes"
+          if [ "$size" -lt 200000 ]; then
+            echo "::error::firmware looks truncated (${size} bytes)"; exit 1
+          fi
+
+          VER="${TAG#v}"
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VER}\"/" _site/manifest.json
+          ls -lR _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

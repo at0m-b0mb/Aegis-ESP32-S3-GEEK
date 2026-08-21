@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" font-family="'DejaVu Sans Mono','Menlo',monospace">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#070c18"/>
+      <stop offset="1" stop-color="#0d1a30"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.10" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#409cff" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#409cff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="shield" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5ab0ff"/>
+      <stop offset="1" stop-color="#2f6fd0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="300" fill="url(#bg)"/>
+  <rect width="1200" height="300" fill="url(#glow)"/>
+
+  <!-- radar, left -->
+  <g stroke="#1b2b46" fill="none" stroke-width="2">
+    <circle cx="108" cy="150" r="92"/>
+    <circle cx="108" cy="150" r="62"/>
+    <circle cx="108" cy="150" r="32"/>
+    <line x1="16" y1="150" x2="200" y2="150"/>
+    <line x1="108" y1="58" x2="108" y2="242"/>
+  </g>
+  <path d="M108 150 L108 58 A92 92 0 0 1 187 104 Z" fill="#409cff" opacity="0.12"/>
+  <line x1="108" y1="150" x2="187" y2="104" stroke="#409cff" stroke-width="2.5"/>
+  <circle cx="150" cy="116" r="6" fill="#f05050"/>
+  <circle cx="86"  cy="98"  r="5" fill="#f0be46"/>
+  <circle cx="72"  cy="188" r="5" fill="#40c88c"/>
+
+  <!-- shield mark -->
+  <g transform="translate(232,84)">
+    <path d="M38 0 L76 15 V58 Q76 100 38 124 Q0 100 0 58 V15 Z" fill="url(#shield)"/>
+    <path d="M38 0 L76 15 V58 Q76 100 38 124 Q0 100 0 58 V15 Z" fill="none" stroke="#8fd0ff" stroke-width="2" opacity="0.5"/>
+    <path d="M24 62 l10 12 l20 -27" fill="none" stroke="#eaf4ff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- wordmark: ends ~x=588, tagline ends ~x=691, both clear of pills at x=735 -->
+  <text x="336" y="138" font-size="80" font-weight="700" fill="#e6eefb" letter-spacing="3">AEGIS</text>
+  <text x="339" y="176" font-size="17" fill="#7f97b8" letter-spacing="2">Wi-Fi + BLE airspace guardian</text>
+  <g transform="translate(339,196)">
+    <rect x="0" y="0" width="236" height="32" rx="16" fill="#0f2036" stroke="#2b4a72"/>
+    <circle cx="21" cy="16" r="6" fill="#40c88c"/>
+    <text x="38" y="22" font-size="15" fill="#9fd8bf" letter-spacing="2">PASSIVE · LISTEN-ONLY</text>
+  </g>
+  <text x="339" y="266" font-size="13" fill="#5f748f" letter-spacing="1">Waveshare ESP32-S3-GEEK · ESP-IDF · pure-C engines</text>
+
+  <!-- detector pills, right column (x 735..1178) -->
+  <g font-size="17" letter-spacing="1">
+    <g transform="translate(735,42)">
+      <rect width="443" height="34" rx="8" fill="#141f34" stroke="#f05050" stroke-opacity="0.55"/>
+      <circle cx="22" cy="17" r="6" fill="#f05050"/>
+      <text x="42" y="23" fill="#d2e0f5">DEAUTH / DISASSOC FLOOD</text>
+    </g>
+    <g transform="translate(735,84)">
+      <rect width="443" height="34" rx="8" fill="#141f34" stroke="#f05050" stroke-opacity="0.55"/>
+      <circle cx="22" cy="17" r="6" fill="#f05050"/>
+      <text x="42" y="23" fill="#d2e0f5">EVIL-TWIN / ROGUE AP</text>
+    </g>
+    <g transform="translate(735,126)">
+      <rect width="443" height="34" rx="8" fill="#141f34" stroke="#f0be46" stroke-opacity="0.55"/>
+      <circle cx="22" cy="17" r="6" fill="#f0be46"/>
+      <text x="42" y="23" fill="#d2e0f5">BEACON FLOOD</text>
+    </g>
+    <g transform="translate(735,168)">
+      <rect width="443" height="34" rx="8" fill="#141f34" stroke="#f0be46" stroke-opacity="0.55"/>
+      <circle cx="22" cy="17" r="6" fill="#f0be46"/>
+      <text x="42" y="23" fill="#d2e0f5">BLE TRACKER (Find My / Tile)</text>
+    </g>
+    <g transform="translate(735,210)">
+      <rect width="443" height="34" rx="8" fill="#141f34" stroke="#409cff" stroke-opacity="0.5"/>
+      <circle cx="22" cy="17" r="6" fill="#409cff"/>
+      <text x="42" y="23" fill="#d2e0f5">BLE PAIRING-SPAM + microSD log</text>
+    </g>
+  </g>
+</svg>

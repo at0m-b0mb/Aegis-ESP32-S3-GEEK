@@ -12,3 +12,4 @@ test/host/bin/
 .DS_Store
 *.o
 *.log
+test/host/out/

@@ -54,6 +54,8 @@ void eviltwin_feed(eviltwin_engine_t *e, const uint8_t *buf, uint16_t len,
 /* Freeze the currently-seen APs as the trusted baseline. After this, any NEW
  * BSSID appearing for one of these SSIDs is treated as an impersonator. */
 void eviltwin_lock_baseline(eviltwin_engine_t *e);
+/* Disarm the baseline: forget trusted marks so the field can be re-learned. */
+void eviltwin_clear_baseline(eviltwin_engine_t *e);
 
 aegis_verdict_t eviltwin_eval(eviltwin_engine_t *e, uint32_t now_ms,
                               aegis_finding_t *out);

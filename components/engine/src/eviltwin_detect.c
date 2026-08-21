@@ -57,6 +57,15 @@ void eviltwin_lock_baseline(eviltwin_engine_t *e)
     e->baseline_locked = true;
 }
 
+
+void eviltwin_clear_baseline(eviltwin_engine_t *e)
+{
+    for (uint8_t i = 0; i < e->n; i++)
+        for (uint8_t j = 0; j < e->tbl[i].nap; j++)
+            e->tbl[i].aps[j].trusted = false;
+    e->baseline_locked = false;
+}
+
 aegis_verdict_t eviltwin_eval(eviltwin_engine_t *e, uint32_t now_ms,
                               aegis_finding_t *out)
 {

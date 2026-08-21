@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flash Aegis · Wi-Fi + BLE airspace guardian</title>
+<meta name="description" content="Flash the Aegis blue-team Wi-Fi/BLE threat monitor to a Waveshare ESP32-S3-GEEK, straight from your browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 L28 6 V16 Q28 26 16 30 Q4 26 4 16 V6 Z' fill='%23409cff'/%3E%3Cpath d='M10 16 l4 4 l8 -10' stroke='%23eaf4ff' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --void:#050a12; --field:#0b1628; --field2:#0e1e34; --rim:#1e3a5c;
+    --accent:#409cff; --accent-hi:#8fd0ff; --amber:#f0be46; --green:#40c88c;
+    --red:#f05050; --text:#e6eefb; --dim:#7f97b8; --dimmer:#56718f;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:radial-gradient(120% 90% at 50% -10%, #12365e 0%, #0a1424 45%, #050a12 100%) fixed;
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.55; min-height:100vh;
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:48px 22px 72px}
+  header{text-align:center;margin-bottom:8px}
+  .mark{width:128px;height:128px;margin:0 auto 6px;display:block;filter:drop-shadow(0 6px 24px rgba(64,156,255,.30))}
+  h1{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:700;letter-spacing:.16em;
+     font-size:2.6rem;margin:.1em 0 .05em}
+  .tagline{color:var(--dim);font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.20em;
+     text-transform:uppercase;font-size:.72rem;margin:0}
+  .rx{display:inline-flex;align-items:center;gap:.5em;margin-top:14px;padding:.35em .9em;
+     border:1px solid #1c4a3a;border-radius:999px;background:#0c2418;color:var(--green);
+     font-size:.82rem;font-family:ui-monospace,Menlo,Consolas,monospace}
+  .rx .d{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green)}
+
+  .card{background:linear-gradient(180deg,#0e1e34 0%,#0b1628 100%);
+     border:1px solid #163150;border-radius:18px;padding:26px 24px;margin:26px 0;
+     box-shadow:0 10px 40px rgba(0,0,0,.35)}
+
+  .flash{text-align:center}
+  .flash h2{margin:.1em 0 .2em;font-size:1.25rem}
+  .flash p{color:var(--dim);margin:.2em auto 1.1em;max-width:46ch}
+  esp-web-install-button{--esp-tools-button-color:#04121b;--esp-tools-button-text-color:#eaf6fa}
+  .btn{display:inline-flex;align-items:center;gap:.6em;cursor:pointer;
+     background:linear-gradient(180deg,var(--accent) 0%,#1f6fd0 100%);color:#04121b;
+     font-weight:700;font-size:1.02rem;border:0;border-radius:12px;padding:.85em 1.6em;
+     box-shadow:0 6px 22px rgba(64,156,255,.35);transition:transform .08s ease}
+  .btn:hover{transform:translateY(-1px)}
+  .unsupported{display:none;color:var(--amber);font-size:.9rem;margin-top:12px}
+  .browsers{color:var(--dimmer);font-size:.8rem;margin-top:14px}
+
+  .notice{border-left:3px solid var(--amber);background:#1c1608;padding:14px 16px;border-radius:10px;
+     margin:18px 0;color:#f0d9b0;font-size:.92rem}
+  .notice b{color:var(--amber)}
+  .fence{border-left:3px solid var(--green);background:#0c2418;padding:14px 16px;border-radius:10px;
+     margin:18px 0;color:#bfead2;font-size:.92rem}
+  .fence b{color:var(--green)}
+
+  h3{font-size:1.02rem;margin:0 0 .5em;letter-spacing:.02em}
+  ol{margin:.2em 0 0;padding-left:1.3em}
+  ol li{margin:.35em 0;color:var(--text)}
+  ol li span{color:var(--dim)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:8px}
+  @media(max-width:560px){.grid{grid-template-columns:1fr}}
+  .spec{background:#0a1626;border:1px solid #163150;border-radius:10px;padding:12px 14px}
+  .spec .k{color:var(--dimmer);font-size:.72rem;text-transform:uppercase;letter-spacing:.08em}
+  .spec .v{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92rem}
+  .rowset{display:grid;grid-template-columns:1fr;gap:8px;margin-top:6px}
+  .drow{display:flex;align-items:center;gap:10px;background:#0a1626;border:1px solid #163150;
+     border-radius:10px;padding:9px 12px;font-size:.92rem}
+  .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+  code{background:#08131f;border:1px solid #163150;border-radius:6px;padding:.12em .45em;
+     font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.86em;color:var(--accent-hi)}
+  a{color:var(--accent)}
+  footer{text-align:center;color:var(--dimmer);font-size:.82rem;margin-top:34px}
+  .links{display:flex;gap:18px;justify-content:center;flex-wrap:wrap;margin:10px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <!-- Shield + radar + check: it guards, it scans, it verifies. -->
+    <svg class="mark" viewBox="0 0 120 120" aria-hidden="true">
+      <defs>
+        <linearGradient id="sh" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#5ab0ff"/><stop offset="1" stop-color="#2f6fd0"/>
+        </linearGradient>
+        <radialGradient id="fld" cx="50%" cy="42%" r="62%">
+          <stop offset="0" stop-color="#123a5e"/><stop offset="100%" stop-color="#0a1526"/>
+        </radialGradient>
+      </defs>
+      <circle cx="60" cy="60" r="58" fill="url(#fld)" stroke="#163150" stroke-width="1.5"/>
+      <!-- faint radar rings behind the shield -->
+      <g fill="none" stroke="#26507e" stroke-width="1.2" opacity=".7">
+        <circle cx="60" cy="60" r="40"/><circle cx="60" cy="60" r="26"/><circle cx="60" cy="60" r="12"/>
+      </g>
+      <!-- shield -->
+      <path d="M60 22 L92 33 V64 Q92 92 60 106 Q28 92 28 64 V33 Z" fill="url(#sh)"/>
+      <path d="M60 22 L92 33 V64 Q92 92 60 106 Q28 92 28 64 V33 Z" fill="none" stroke="#8fd0ff" stroke-width="1.6" opacity=".55"/>
+      <!-- check -->
+      <path d="M45 63 l10 11 l20 -26" fill="none" stroke="#eaf4ff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <h1>AEGIS</h1>
+    <p class="tagline">Wi-Fi&nbsp;+&nbsp;BLE&nbsp;Airspace&nbsp;Guardian</p>
+    <div class="rx"><span class="d"></span>listen-only · it never transmits</div>
+  </header>
+
+  <div class="card flash">
+    <h2>Flash it from your browser</h2>
+    <p>Plug the ESP32-S3-GEEK into a USB port, click install, pick the serial port. No toolchain, no drivers to hunt down.</p>
+
+    <esp-web-install-button manifest="./manifest.json">
+      <button slot="activate" class="btn">⚡ Install Aegis</button>
+      <span slot="unsupported" class="unsupported">
+        Your browser can't talk to USB serial. Open this page in <b>Chrome</b> or <b>Edge</b> on a desktop.
+      </span>
+      <span slot="not-allowed" class="unsupported">
+        This page must be served over HTTPS to flash. Use the hosted link, not a local file.
+      </span>
+    </esp-web-install-button>
+
+    <div class="browsers">Needs a Chromium browser (Chrome / Edge / Opera) on desktop — the Web Serial API isn't in Safari or Firefox.</div>
+  </div>
+
+  <div class="fence">
+    <b>What "listen-only" means here.</b> Aegis is built from receive paths only: the BLE stack is
+    compiled as a NimBLE <b>observer</b> with the broadcaster and peripheral roles disabled, and the
+    Wi-Fi radio runs in promiscuous (monitor) mode. It captures no payloads, decrypts nothing, and
+    emits no Wi-Fi frame or BLE advertisement.
+  </div>
+
+  <div class="card">
+    <h3>The five detectors</h3>
+    <div class="rowset">
+      <div class="drow"><span class="dot" style="background:#f05050"></span>Deauth / disassoc flood <span style="color:var(--dim)">— clients kicked offline</span></div>
+      <div class="drow"><span class="dot" style="background:#f05050"></span>Evil-twin / rogue AP <span style="color:var(--dim)">— a look-alike of a network you trust</span></div>
+      <div class="drow"><span class="dot" style="background:#f0be46"></span>Beacon flood <span style="color:var(--dim)">— fake-AP storms (mdk3/mdk4)</span></div>
+      <div class="drow"><span class="dot" style="background:#f0be46"></span>BLE tracker <span style="color:var(--dim)">— an AirTag / Tile / SmartTag following you</span></div>
+      <div class="drow"><span class="dot" style="background:#409cff"></span>BLE pairing-spam <span style="color:var(--dim)">— Continuity / Fast Pair / Swift Pair pop-up floods</span></div>
+    </div>
+  </div>
+
+  <div class="notice">
+    <b>⚖️ Authorised use only.</b> Aegis is a defensive, listen-only tool — but even passive
+    monitoring is regulated in some places, and acting on what it shows you is your responsibility.
+    Use it only on airspace you own or are authorised to assess. Read the
+    <a href="https://github.com/at0m-b0mb/Aegis-ESP32-S3-GEEK#safety--ethics">safety &amp; ethics notes</a> first.
+  </div>
+
+  <div class="card">
+    <h3>What you need</h3>
+    <div class="grid">
+      <div class="spec"><div class="k">Board</div><div class="v">Waveshare ESP32-S3-GEEK</div></div>
+      <div class="spec"><div class="k">Port</div><div class="v">USB-A (the GEEK's own plug), data-capable</div></div>
+      <div class="spec"><div class="k">Browser</div><div class="v">Chrome / Edge, desktop</div></div>
+      <div class="spec"><div class="k">Image</div><div class="v">single file, flashed at 0x0</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Steps</h3>
+    <ol>
+      <li>Plug the GEEK into a USB-A port on your computer (or a USB-A data extension). <span>USB-C-only laptop? Use an A-to-C adapter.</span></li>
+      <li>Click <b>Install Aegis</b> and choose the board's serial port. <span>(If none appears, hold BOOT while plugging in.)</span></li>
+      <li>Let it erase and write — about a minute. Keep it plugged in.</li>
+      <li>It reboots into Aegis: the splash, then the live radar. A serial console also runs at <code>115200</code>.</li>
+    </ol>
+  </div>
+
+  <div class="notice">
+    <b>Heads-up on this build.</b> The detection engines, the microSD evidence log and the serial
+    alerts are all live. The 1.14″ LCD bring-up (orientation / colour order) is the one thing not yet
+    validated on physical hardware — if the screen looks rotated or off-colour, that's the known tweak,
+    not a flashing failure.
+  </div>
+
+  <footer>
+    <div class="links">
+      <a href="https://github.com/at0m-b0mb/Aegis-ESP32-S3-GEEK">Source</a>
+      <a href="https://github.com/at0m-b0mb/Aegis-ESP32-S3-GEEK/releases">Releases</a>
+      <a href="https://github.com/at0m-b0mb/Aegis-ESP32-S3-GEEK#build--flash">Docs</a>
+    </div>
+    <div>Flashing runs entirely in your browser over Web Serial — nothing is uploaded anywhere.</div>
+    <div>MIT © at0m-b0mb · a shield for the 2.4 GHz sky</div>
+  </footer>
+</div>
+
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+</body>
+</html>

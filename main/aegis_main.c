@@ -1,18 +1,14 @@
 /*
  * aegis_main.c - Aegis firmware entry for the Waveshare ESP32-S3-GEEK.
  *
- * BLUE-TEAM build. Aegis is a passive airspace guardian: it puts the Wi-Fi
- * radio into promiscuous mode and runs a NimBLE observer, feeds every frame /
- * advert into the pure-C detection engines (components/engine), and reports
- * findings. It never transmits Wi-Fi frames and never advertises over BLE.
+ * BLUE-TEAM, listen-only. Aegis puts the Wi-Fi radio in promiscuous mode and
+ * runs a NimBLE observer, feeds every frame/advert into the pure-C detection
+ * engines (components/engine), paints a live dashboard on the 1.14" LCD
+ * (components/ui), logs alerts to microSD, and lets the BOOT button arm the
+ * evil-twin baseline. It never transmits a Wi-Fi frame and never advertises.
  *
- * This release wires the engines to the radios and reports over the USB serial
- * console. The on-screen radar UI on the 1.14" LCD is the next milestone; the
- * pin map is already in board.h. Red-team features are intentionally NOT part
- * of this firmware and will be considered later.
- *
- * Wi-Fi and BLE share the single 2.4GHz radio via software coexistence, so
- * their airtime interleaves - expect each to sample, not to capture 100%.
+ * Wi-Fi and BLE share the single 2.4GHz radio via software coexistence, so each
+ * samples the band rather than capturing all of it.
  */
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -22,8 +18,8 @@
 #include "esp_timer.h"
 #include "esp_event.h"
 #include "esp_wifi.h"
-#include "esp_mac.h"
 #include "nvs_flash.h"
+#include "driver/gpio.h"
 
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
@@ -37,21 +33,23 @@
 #include "eviltwin_detect.h"
 #include "beacon_flood.h"
 #include "ble_threat.h"
+#include "display.h"
+#include "sdlog.h"
+#include "ui.h"
 
 static const char *TAG = "aegis";
 
-/* All engine state lives behind one mutex: the Wi-Fi promiscuous callback and
- * the NimBLE observer callback both feed it, and the report task reads it. */
 static SemaphoreHandle_t     s_lock;
 static deauth_engine_t       s_deauth;
 static eviltwin_engine_t     s_eviltwin;
 static beacon_flood_engine_t s_beacon;
 static ble_engine_t          s_ble;
+static bool                  s_baseline_locked;
+static bool                  s_wifi_ok, s_ble_ok, s_disp_ok;
 
 static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
 /* ---------------- Wi-Fi promiscuous path ---------------- */
-
 static void wifi_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type)
 {
     if (type != WIFI_PKT_MGMT) return;
@@ -64,35 +62,32 @@ static void wifi_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type)
 
     wifi_mgmt_t m;
     if (!wifi_parse_mgmt(frame, len, &m)) return;
-
-    if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
-        switch (m.subtype) {
-            case WIFI_STYPE_DEAUTH:
-            case WIFI_STYPE_DISASSOC:
-                deauth_feed(&s_deauth, &m, wifi_reason_code(frame, len), rssi, chan, t);
-                break;
-            case WIFI_STYPE_BEACON:
-                eviltwin_feed(&s_eviltwin, frame, len, rssi, t);
-                beacon_flood_feed(&s_beacon, frame, len, t);
-                break;
-            case WIFI_STYPE_PROBE_RESP:
-                eviltwin_feed(&s_eviltwin, frame, len, rssi, t);
-                break;
-            default: break;
-        }
-        xSemaphoreGive(s_lock);
+    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) return;
+    switch (m.subtype) {
+        case WIFI_STYPE_DEAUTH:
+        case WIFI_STYPE_DISASSOC:
+            deauth_feed(&s_deauth, &m, wifi_reason_code(frame, len), rssi, chan, t);
+            break;
+        case WIFI_STYPE_BEACON:
+            eviltwin_feed(&s_eviltwin, frame, len, rssi, t);
+            beacon_flood_feed(&s_beacon, frame, len, t);
+            break;
+        case WIFI_STYPE_PROBE_RESP:
+            eviltwin_feed(&s_eviltwin, frame, len, rssi, t);
+            break;
+        default: break;
     }
+    xSemaphoreGive(s_lock);
 }
 
-/* Cycle the sniffer across the 2.4GHz channels so we hear every AP/attack. */
 static void channel_hop_task(void *arg)
 {
     (void)arg;
-    const uint8_t channels[] = {1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10};
+    const uint8_t ch[] = {1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10};
     size_t i = 0;
     for (;;) {
-        esp_wifi_set_channel(channels[i], WIFI_SECOND_CHAN_NONE);
-        i = (i + 1) % (sizeof(channels) / sizeof(channels[0]));
+        esp_wifi_set_channel(ch[i], WIFI_SECOND_CHAN_NONE);
+        i = (i + 1) % sizeof(ch);
         vTaskDelay(pdMS_TO_TICKS(280));
     }
 }
@@ -106,17 +101,16 @@ static void wifi_start_sniffer(void)
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_NULL));
     ESP_ERROR_CHECK(esp_wifi_start());
-
     wifi_promiscuous_filter_t filter = { .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT };
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&filter));
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(wifi_rx_cb));
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
     xTaskCreate(channel_hop_task, "chan_hop", 2048, NULL, 4, NULL);
+    s_wifi_ok = true;
     ESP_LOGI(TAG, "Wi-Fi sniffer up (promiscuous, mgmt-only, hopping)");
 }
 
 /* ---------------- BLE observer path ---------------- */
-
 static int ble_gap_event(struct ble_gap_event *event, void *arg)
 {
     (void)arg;
@@ -134,66 +128,89 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
 static void ble_start_observer(void)
 {
     uint8_t own_addr_type;
-    if (ble_hs_util_ensure_addr(0) != 0) { ESP_LOGE(TAG, "no BLE addr"); return; }
+    if (ble_hs_util_ensure_addr(0) != 0) return;
     if (ble_hs_id_infer_auto(0, &own_addr_type) != 0) return;
-
-    struct ble_gap_disc_params dp = {
-        .passive = 1,            /* listen only, never send scan requests */
-        .itvl = 0, .window = 0,  /* stack defaults                        */
-        .filter_duplicates = 0,  /* we WANT repeats - that is the signal  */
-        .limited = 0,
-    };
-    int rc = ble_gap_disc(own_addr_type, BLE_HS_FOREVER, &dp, ble_gap_event, NULL);
-    if (rc != 0) ESP_LOGE(TAG, "ble_gap_disc rc=%d", rc);
-    else         ESP_LOGI(TAG, "BLE observer up (passive scan)");
+    struct ble_gap_disc_params dp = { .passive = 1, .filter_duplicates = 0 };
+    if (ble_gap_disc(own_addr_type, BLE_HS_FOREVER, &dp, ble_gap_event, NULL) == 0) {
+        s_ble_ok = true;
+        ESP_LOGI(TAG, "BLE observer up (passive scan)");
+    }
 }
-
 static void ble_on_sync(void) { ble_start_observer(); }
 static void ble_host_task(void *param) { (void)param; nimble_port_run(); nimble_port_freertos_deinit(); }
 
-/* ---------------- reporting ---------------- */
-
-static void log_finding(const aegis_finding_t *f)
+/* ---------------- button: BOOT toggles the evil-twin baseline ---------------- */
+static void button_init(void)
 {
-    if (f->verdict < AEGIS_ELEVATED) return;
-    ESP_LOGW(TAG, "[%-8s] %-12s score=%2u  %s  (hits=%lu ch=%u rssi=%d)",
-             aegis_verdict_str(f->verdict), aegis_kind_str(f->kind), f->score,
-             f->label[0] ? f->label : "-", (unsigned long)f->hits,
-             f->channel, f->rssi);
+    gpio_config_t io = { .pin_bit_mask = 1ULL << BOARD_BTN_PIN,
+                         .mode = GPIO_MODE_INPUT, .pull_up_en = GPIO_PULLUP_ENABLE };
+    gpio_config(&io);
 }
 
-static void report_task(void *arg)
+static bool button_pressed_edge(void)
+{
+    static int prev = 1;
+    int lvl = gpio_get_level(BOARD_BTN_PIN);   /* active low */
+    bool edge = (prev == 1 && lvl == 0);
+    prev = lvl;
+    return edge;
+}
+
+static void toggle_baseline(void)
+{
+    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) return;
+    if (s_baseline_locked) { eviltwin_clear_baseline(&s_eviltwin); s_baseline_locked = false; }
+    else                   { eviltwin_lock_baseline(&s_eviltwin);  s_baseline_locked = true;  }
+    xSemaphoreGive(s_lock);
+    ESP_LOGW(TAG, "evil-twin baseline %s", s_baseline_locked ? "LOCKED" : "cleared");
+}
+
+/* ---------------- main UI / detection loop ---------------- */
+static void ui_task(void *arg)
 {
     (void)arg;
+    if (s_disp_ok) { ui_render_splash(display_canvas()); display_flush(); }
+    vTaskDelay(pdMS_TO_TICKS(1500));
+
+    bool was_likely[UI_SLOT_COUNT] = {0};
+    uint32_t t0 = now_ms();
+    ui_state_t st; memset(&st, 0, sizeof(st));
+
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        aegis_finding_t fd, fe, fb, ft, fs;
-        if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) continue;
+        if (button_pressed_edge()) toggle_baseline();
+
         uint32_t t = now_ms();
-        deauth_eval(&s_deauth, t, &fd);
-        eviltwin_eval(&s_eviltwin, t, &fe);
-        beacon_flood_eval(&s_beacon, t, &fb);
-        ble_eval_tracker(&s_ble, t, &ft);
-        ble_eval_spam(&s_ble, t, &fs);
-        xSemaphoreGive(s_lock);
-
-        aegis_verdict_t worst = fd.verdict;
-        if (fe.verdict > worst) worst = fe.verdict;
-        if (fb.verdict > worst) worst = fb.verdict;
-        if (ft.verdict > worst) worst = ft.verdict;
-        if (fs.verdict > worst) worst = fs.verdict;
-
-        if (worst == AEGIS_CLEAR) {
-            ESP_LOGI(TAG, "airspace CLEAR (no signature this window)");
-        } else {
-            log_finding(&fd); log_finding(&fe); log_finding(&fb);
-            log_finding(&ft); log_finding(&fs);
+        if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+            deauth_eval(&s_deauth,   t, &st.f[UI_SLOT_DEAUTH]);
+            eviltwin_eval(&s_eviltwin, t, &st.f[UI_SLOT_EVILTWIN]);
+            beacon_flood_eval(&s_beacon, t, &st.f[UI_SLOT_BEACON]);
+            ble_eval_tracker(&s_ble, t, &st.f[UI_SLOT_TRACKER]);
+            ble_eval_spam(&s_ble,    t, &st.f[UI_SLOT_SPAM]);
+            st.baseline_locked = s_baseline_locked;
+            xSemaphoreGive(s_lock);
         }
+        st.wifi_ok = s_wifi_ok; st.ble_ok = s_ble_ok;
+        st.uptime_s = (t - t0) / 1000;
+        st.sweep_deg = (uint16_t)((st.sweep_deg + 9) % 360);
+
+        /* alert on the rising edge into LIKELY: serial + SD evidence */
+        for (int i = 0; i < UI_SLOT_COUNT; i++) {
+            bool lk = st.f[i].verdict == AEGIS_LIKELY;
+            if (lk && !was_likely[i]) {
+                ESP_LOGW(TAG, "ALERT %-12s score=%u %s (ch=%u hits=%lu)",
+                         aegis_kind_str(st.f[i].kind), st.f[i].score, st.f[i].label,
+                         st.f[i].channel, (unsigned long)st.f[i].hits);
+                sdlog_alert(st.uptime_s, &st.f[i]);
+            }
+            was_likely[i] = lk;
+        }
+
+        if (s_disp_ok) { ui_render(display_canvas(), &st); display_flush(); }
+        vTaskDelay(pdMS_TO_TICKS(120));
     }
 }
 
 /* ---------------- entry ---------------- */
-
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -208,13 +225,16 @@ void app_main(void)
     beacon_flood_reset(&s_beacon);
     ble_reset(&s_ble);
 
-    ESP_LOGI(TAG, "Aegis blue-team monitor starting (Wi-Fi + BLE passive)");
+    ESP_LOGI(TAG, "Aegis blue-team monitor starting (Wi-Fi + BLE, listen-only)");
+
+    s_disp_ok = display_init();
+    button_init();
+    sdlog_init();
 
     wifi_start_sniffer();
-
     ESP_ERROR_CHECK(nimble_port_init());
     ble_hs_cfg.sync_cb = ble_on_sync;
     nimble_port_freertos_init(ble_host_task);
 
-    xTaskCreate(report_task, "report", 4096, NULL, 5, NULL);
+    xTaskCreate(ui_task, "aegis_ui", 6144, NULL, 5, NULL);
 }
